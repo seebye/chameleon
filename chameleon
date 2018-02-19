@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+# chameleon is a simple color picker for X11
+# Copyright (C) 2018  Nico Baeurer
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""Usage:
+    chameleon [options]
+
+Options:
+    -m <px>, --margin <px>     Distance to the cursor in px [default: 50]
+    -S <px>, --separator <px>  Distance between color windows [default: 20]
+    -s <px>, --size <px>       Size of a color window [default: 30]
+    -b <px>, --border <px>     Border size of a color window [default: 4]
+    -c <n>, --count <n>        Number of colors to select [default: 1]
+    -f <fmt>, --format <fmt>   Color format [default: #{0:02x}{1:02x}{2:02x}]
+
+License:
+    chameleon  Copyright (C) 2018  Nico Baeurer
+    This program comes with ABSOLUTELY NO WARRANTY.
+    This is free software, and you are welcome to redistribute it
+    under certain conditions.
+"""
+import contextlib
+import itertools
+
+from Xlib import X, display, Xcursorfont
+import PIL.Image
+import math
+import colorsys
+import docopt
+
+
+def singleton(cls):
+    """Creates argless singletons"""
+    return cls()
+
+
+@singleton
+class Params:
+    """Helper class which allows to access passed arguments"""
+    # lambda needed to access the right docstring
+    __dict = docopt.docopt((lambda: __doc__)())
+    __default = docopt.docopt((lambda: __doc__)(), argv=[])
+    __typed = {}
+
+    def _init_key(self, key):
+        val_def = Params.__default.get(key)
+        val = Params.__dict[key]
+
+        try:
+            int(val_def)
+        except ValueError:
+            return val
+        return int(val)
+
+    def __getattr__(self, name):
+        key = name if name in Params.__dict \
+            else '--' + name
+        val = Params.__typed.get(key)
+
+        if not val:
+            val = self._init_key(key)
+            Params.__typed[key] = val
+
+        return val
+
+
+@contextlib.contextmanager
+def create_font_cursor(display, which):
+    """Implementation of libX11 XCreateFontCursor,
+    creates one of the default cursors.
+
+    Arg:
+        display: Xlib display
+        which: one of Xcursorfont
+
+    Yields:
+        the acquired cursor object
+    """
+    # see: https://github.com/mirror/libX11/blob/78851f6a03130e3c720b60c3cbf96f8eb216d741/src/Cursor.c # noqa
+    black, white = (0, 0, 0), (65535, 65535, 65535)
+    font, cursor = None, None
+
+    try:
+        font = display.open_font('cursor')
+        cursor = font.create_glyph_cursor(
+            font, which, which+1,
+            black, white)
+        yield cursor
+    finally:
+        if cursor:
+            cursor.free()
+        if font:
+            font.close()
+
+
+@contextlib.contextmanager
+def pick_coordinate(display, cursor):
+    """Changes the cursor and grabs the pointer for every window.
+
+    Args:
+        display: Xlib display
+        cursor: cursor object or X.NONE
+    """
+    try:
+        display.screen().root.grab_pointer(
+            0, X.PointerMotionMask | X.ButtonReleaseMask | X.ButtonPressMask,
+            X.GrabModeAsync, X.GrabModeAsync, X.NONE,
+            cursor, X.CurrentTime)
+        display.flush()
+        yield
+    finally:
+        display.ungrab_pointer(0)
+        display.flush()
+
+
+def events(display):
+    """Returns an generator which yields incoming x11 events"""
+    return (display.next_event() for _ in itertools.count())
+
+
+def get_pointer_position(root, event=None):
+    """Extracts the pointer position from the event,
+    falls back to root.query_pointer on failure.
+
+    Args:
+        root: Xlib root window
+        event: Xlib event
+
+    Returns:
+        (tuple of int): (x, y) pointer position
+    """
+    try:
+        return event.root_x, event.root_y
+    except AttributeError:
+        reply = root.query_pointer()
+        return reply.root_x, reply.root_y
+
+
+def get_pixel(wnd, x, y):
+    """Determines the pixel at the passed position.
+
+    Arg:
+        wnd: Xlib window
+        x (int): self-explanatory
+        y (int): self-explanatory
+
+    Returns:
+        (tuple of int): (r, g, b) color tuple
+    """
+    image = wnd.get_image(x, y, 1, 1, X.ZPixmap, 0xffffffff)
+    return PIL.Image.frombytes("RGB", (1, 1), image.data, "raw", "BGRX")\
+        .getcolors()[0][1]
+
+
+def adjust_brightness(percent, r, g, b):
+    """Converts the rgb color to hsv and
+    increases or decreases the brightness
+    by brightness * percent / 100.
+
+    Args:
+        percent (int): targeted brightness difference
+        r (int): red
+        g (int): green
+        b (int): blue
+
+    Returns:
+        (tuple of int): (r, g, b) lightened or darkened color
+    """
+    hsv = list(colorsys.rgb_to_hsv(r / 255, g / 255, b / 255))
+    part = hsv[2] * percent / 100
+    hsv[2] = max(0, hsv[2] - part) \
+        if hsv[2] > .5 \
+        else min(1, hsv[2] + part)
+    return map(lambda i: i * 255,
+               colorsys.hsv_to_rgb(*hsv))
+
+
+class ColorWindow:
+    """Window class used to display a color,
+    e.g. a selected one or a live preview
+
+    Attributes:
+        margin (int): distance to the pointer
+        size (int): window size, not changeable
+        size_border (int): border size
+    """
+
+    def __init__(self, display, margin, size, size_border, color=(0, 0, 0)):
+        self._last_color = color
+        self._display = display
+        self._screen = display.screen()
+        self._root = self._screen.root
+        self.margin = margin + int(size / 2)
+        self.size = size
+        self.size_border = size_border
+        self._wnd = None
+        self._gc = None
+        res = self._root.get_geometry()
+        self.screen_width, self.screen_height = res.width, res.height
+
+    def map(self):
+        """Creates a window and gc if they don't exists already,
+        and maps it afterwards.
+
+        Returns:
+            X11 window
+        """
+        if not self._wnd:
+            self._wnd = self._root.create_window(
+                0, 0, self.size, self.size, 0,
+                self._screen.root_depth,
+                X.InputOutput, X.CopyFromParent,
+                event_mask=X.ExposureMask,
+                colormap=X.CopyFromParent,
+                override_redirect=True)
+            self._gc = self._wnd.create_gc()
+        self._wnd.map()
+        self._display.flush()
+        return self._wnd
+
+    def unmap(self):
+        """Unmaps the window if it exists."""
+        if self._wnd:
+            self._wnd.unmap()
+            self._wnd.destroy()
+            self._display.flush()
+
+    def move(self, x, y):
+        """Moves the window based on the given position
+        and tries to keep it visible while doing so.
+
+        Args:
+            x (int): x-cursor position
+            y (int): y-cursor position
+        """
+        # Cartesian coordinate system / x, y from center
+        x_center = (x - self.screen_width / 2)
+        y_center = -(y - self.screen_height / 2)
+        # inverted radians
+        rad = math.atan2(-y_center, -x_center)
+        offset_y = int(self.margin * -math.sin(rad))
+        offset_x = int(self.margin * math.cos(rad))
+
+        self._wnd.configure(
+            # - size/2 => move the object at its center
+            x=x - int(self.size / 2) + offset_x,
+            y=y - int(self.size / 2) + offset_y
+        )
+
+    def _set_color(self, r, g, b):
+        """Changes the foreground color of the gc object.
+
+        Args:
+            r (int): red
+            g (int): green
+            b (int): blue
+        """
+        self._gc.change(foreground=((0xff << (8 * 3)) |
+                                    (int(r) << (8 * 2)) |
+                                    (int(g) << (8 * 1)) |
+                                    (int(b) << (8 * 0))))
+
+    def _draw_rectangle(self, x, y, width, height):
+        """Draws a rectangle with the current foreground color on the window.
+
+        Args:
+            x (int): self-explainatory
+            y (int): self-explainatory
+            width (int): self-explainatory
+            height (int): self-explainatory
+        """
+        self._wnd.fill_rectangle(self._gc, x, y, width, height)
+
+    def _draw_border(self, r, g, b):
+        """Draws a lightened or darkened border
+        based on the passed color on the window.
+
+        Args:
+            r (int): red
+            g (int): green
+            b (int): blue
+        """
+        self._set_color(*adjust_brightness(45, r, g, b))
+
+        for rect in ((0, 0, self.size_border, self.size),
+                     (0, 0, self.size, self.size_border),
+                     (self.size - self.size_border, 0, self.size, self.size),
+                     (0, self.size - self.size_border, self.size, self.size)):
+            self._draw_rectangle(*rect)
+
+    def draw(self, rgb=None):
+        """Redraws the window.
+
+        Args:
+            rgb (tuple of int): new color or None
+        """
+        r, g, b = rgb or self._last_color
+        self._last_color = (r, g, b)
+        self._set_color(r, g, b)
+        self._draw_rectangle(0, 0, self.size, self.size)
+        self._draw_border(r, g, b)
+
+
+class WindowMapper(contextlib.ContextDecorator, list):
+    """Ensures unmapping of windows"""
+
+    def __init__(self, *wnds):
+        self._mapped = False
+        self.extend(wnds)
+
+    def append(self, wnd):
+        if self._mapped:
+            wnd.map()
+        super().append(wnd)
+
+    def __enter__(self):
+        for wnd in self:
+            wnd.map()
+        self._mapped = True
+        return self
+
+    def __exit__(self, *args):
+        for wnd in self:
+            wnd.unmap()
+
+
+if __name__ == '__main__':
+    display = display.Display()
+    root = display.screen().root
+    wnd = ColorWindow(display, Params.margin, Params.size,
+                      Params.border)
+    count = itertools.count()
+
+    with WindowMapper(wnd) as mapper,\
+            create_font_cursor(display, Xcursorfont.tcross) as cursor,\
+            pick_coordinate(display, cursor):
+        for e in events(display):
+            x, y = get_pointer_position(root, e)
+            r, g, b = get_pixel(root, x, y)
+
+            if e.type == X.ButtonPress:
+                print(Params.format.format(r, g, b))
+                if next(count) + 1 >= Params.count:
+                    break
+
+                mapper.append(ColorWindow(
+                    display,
+                    (len(mapper) * (Params.size + Params.separator) +
+                        Params.margin),
+                    Params.size,
+                    Params.border,
+                    (r, g, b)))
+
+            elif e.type in (X.Expose, X.MotionNotify):
+                for w in mapper:
+                    if e.type == X.Expose:
+                        w.draw()
+                    w.move(x, y)
+                wnd.draw((r, g, b))
