@@ -183,7 +183,7 @@ def adjust_brightness(percent, r, g, b):
     hsv[2] = max(0, hsv[2] - part) \
         if hsv[2] > .5 \
         else min(1, hsv[2] + part)
-    return map(lambda i: i * 255,
+    return map(lambda i: int(i * 255),
                colorsys.hsv_to_rgb(*hsv))
 
 
