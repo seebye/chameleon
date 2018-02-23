@@ -50,7 +50,7 @@ Conversion supports:
   ```chameleon -c 2 -C "hls(h1, l, s)" "`chameleon`"```
 - Selecting five colors with 0.5 lightness or more:  
   `chameleon -c 5 -C "hls(h, min(0.5, l), s)"`
-- Selecting two colors with the lightness of the first selection and a constant hue:  
+- Selecting two colors with the lightness of a previous selection and a constant hue:  
   ```chameleon -c 2 -C "hls(h1, l2, s)" "#ff0000" "`chameleon`"```
 
 ## 5. Preview
