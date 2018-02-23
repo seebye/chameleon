@@ -29,16 +29,16 @@ def default_rgb(r, g, b):
     return tuple(int(i * 255) for i in (r, g, b))
 
 def colorsys_hsv_hls(h, s, vl):
-    """Converts normal hsv/hls [0-360], [0-1], [0-1] to
+    """Converts normal hsv/hls [0-360], [0-100], [0-100] to
     colorsys rgb [0-1], [0-1], [0-1]
     """
-    return h / 360, s, vl
+    return h / 360, s / 100, vl / 100
 
 def default_hsv_hls(h, s, vl):
     """Converts colorsys hsv/hls [0-1], [0-1], [0-1] to
-    normal hsv/hls [0-360], [0-1], [0-1]
+    normal hsv/hls [0-360], [0-100], [0-100]
     """
-    return h * 360, s, vl
+    return h * 360, s * 100, vl * 100
 
 
 def adjust_brightness(percent, r, g, b):

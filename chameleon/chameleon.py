@@ -44,8 +44,8 @@ Conversion:
         Subsequent colours will be named by the same structure.
 
         rgb: declares colors as r [0-255], g [0-255], b [0-255]
-        hls: declares colors as h [0-360], l [0-1], s [0-1]
-        hsv: declares colors as h [0-360], s [0-1], v [0-1]
+        hls: declares colors as h [0-360], l [0-100], s [0-100]
+        hsv: declares colors as h [0-360], s [0-100], v [0-100]
         yiq: declares colors as y [0-1], i, q
 
     Operators:
