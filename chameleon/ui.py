@@ -1,80 +1,10 @@
-#!/usr/bin/env python3
-# chameleon is a simple color picker for X11
-# Copyright (C) 2018  Nico Baeurer
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""Usage:
-    chameleon [options]
-
-Options:
-    -m <px>, --margin <px>     Distance to the cursor in px [default: 50]
-    -S <px>, --separator <px>  Distance between color windows [default: 20]
-    -s <px>, --size <px>       Size of a color window [default: 30]
-    -b <px>, --border <px>     Border size of a color window [default: 4]
-    -c <n>, --count <n>        Number of colors to select [default: 1]
-    -f <fmt>, --format <fmt>   Color format [default: #{0:02x}{1:02x}{2:02x}]
-
-License:
-    chameleon  Copyright (C) 2018  Nico Baeurer
-    This program comes with ABSOLUTELY NO WARRANTY.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions.
-"""
 import contextlib
 import itertools
+import math
 
 from Xlib import X, display, Xcursorfont
 import PIL.Image
-import math
-import colorsys
-import docopt
-
-
-def singleton(cls):
-    """Creates argless singletons"""
-    return cls()
-
-
-@singleton
-class Params:
-    """Helper class which allows to access passed arguments"""
-    # lambda needed to access the right docstring
-    __dict = docopt.docopt((lambda: __doc__)())
-    __default = docopt.docopt((lambda: __doc__)(), argv=[])
-    __typed = {}
-
-    def _init_key(self, key):
-        val_def = Params.__default.get(key)
-        val = Params.__dict[key]
-
-        try:
-            int(val_def)
-        except ValueError:
-            return val
-        return int(val)
-
-    def __getattr__(self, name):
-        key = name if name in Params.__dict \
-            else '--' + name
-        val = Params.__typed.get(key)
-
-        if not val:
-            val = self._init_key(key)
-            Params.__typed[key] = val
-
-        return val
-
+import chameleon.colors as colors
 
 @contextlib.contextmanager
 def create_font_cursor(display, which):
@@ -95,7 +25,7 @@ def create_font_cursor(display, which):
     try:
         font = display.open_font('cursor')
         cursor = font.create_glyph_cursor(
-            font, which, which+1,
+            font, which, which + 1,
             black, white)
         yield cursor
     finally:
@@ -164,29 +94,6 @@ def get_pixel(wnd, x, y):
         .getcolors()[0][1]
 
 
-def adjust_brightness(percent, r, g, b):
-    """Converts the rgb color to hsv and
-    increases or decreases the brightness
-    by brightness * percent / 100.
-
-    Args:
-        percent (int): targeted brightness difference
-        r (int): red
-        g (int): green
-        b (int): blue
-
-    Returns:
-        (tuple of int): (r, g, b) lightened or darkened color
-    """
-    hsv = list(colorsys.rgb_to_hsv(r / 255, g / 255, b / 255))
-    part = hsv[2] * percent / 100
-    hsv[2] = max(0, hsv[2] - part) \
-        if hsv[2] > .5 \
-        else min(1, hsv[2] + part)
-    return map(lambda i: int(i * 255),
-               colorsys.hsv_to_rgb(*hsv))
-
-
 class ColorWindow:
     """Window class used to display a color,
     e.g. a selected one or a live preview
@@ -235,6 +142,7 @@ class ColorWindow:
         if self._wnd:
             self._wnd.unmap()
             self._wnd.destroy()
+            self._wnd = None
             self._display.flush()
 
     def move(self, x, y):
@@ -292,7 +200,7 @@ class ColorWindow:
             g (int): green
             b (int): blue
         """
-        self._set_color(*adjust_brightness(45, r, g, b))
+        self._set_color(*colors.adjust_brightness(45, r, g, b))
 
         for rect in ((0, 0, self.size_border, self.size),
                      (0, 0, self.size, self.size_border),
@@ -334,38 +242,3 @@ class WindowMapper(contextlib.ContextDecorator, list):
     def __exit__(self, *args):
         for wnd in self:
             wnd.unmap()
-
-
-if __name__ == '__main__':
-    display = display.Display()
-    root = display.screen().root
-    wnd = ColorWindow(display, Params.margin, Params.size,
-                      Params.border)
-    count = itertools.count()
-
-    with WindowMapper(wnd) as mapper,\
-            create_font_cursor(display, Xcursorfont.tcross) as cursor,\
-            pick_coordinate(display, cursor):
-        for e in events(display):
-            x, y = get_pointer_position(root, e)
-            r, g, b = get_pixel(root, x, y)
-
-            if e.type == X.ButtonPress:
-                print(Params.format.format(r, g, b))
-                if next(count) + 1 >= Params.count:
-                    break
-
-                mapper.append(ColorWindow(
-                    display,
-                    (len(mapper) * (Params.size + Params.separator) +
-                        Params.margin),
-                    Params.size,
-                    Params.border,
-                    (r, g, b)))
-
-            elif e.type in (X.Expose, X.MotionNotify):
-                for w in mapper:
-                    if e.type == X.Expose:
-                        w.draw()
-                    w.move(x, y)
-                wnd.draw((r, g, b))
