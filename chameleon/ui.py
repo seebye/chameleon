@@ -90,6 +90,8 @@ def get_pixel(wnd, x, y):
         (tuple of int): (r, g, b) color tuple
     """
     image = wnd.get_image(x, y, 1, 1, X.ZPixmap, 0xffffffff)
+    if isinstance(image.data, str):
+        image.data = image.data.encode()
     return PIL.Image.frombytes("RGB", (1, 1), image.data, "raw", "BGRX")\
         .getcolors()[0][1]
 
