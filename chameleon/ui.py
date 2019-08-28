@@ -6,6 +6,10 @@ from Xlib import X, display, Xcursorfont
 import PIL.Image
 import chameleon.colors as colors
 
+
+X.MOUSE_BUTTON_LEFT = 1
+
+
 @contextlib.contextmanager
 def create_font_cursor(display, which):
     """Implementation of libX11 XCreateFontCursor,

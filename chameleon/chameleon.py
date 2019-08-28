@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # chameleon is a simple color picker for X11
-# Copyright (C) 2018  Nico Baeurer
+# Copyright (C) 2018  seebye
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -66,7 +66,7 @@ Conversion:
         pi, e
 
 License:
-    chameleon  Copyright (C) 2018  Nico Baeurer
+    chameleon  Copyright (C) 2018  seebye
     This program comes with ABSOLUTELY NO WARRANTY.
     This is free software, and you are welcome to redistribute it
     under certain conditions.
@@ -130,7 +130,7 @@ def main():
             rgb = calc.calc(*itertools.chain(
                 (ui.get_pixel(root, x, y),), rgbs))
 
-            if e.type == X.ButtonPress:
+            if e.type == X.ButtonPress and e.detail == X.MOUSE_BUTTON_LEFT:
                 print(Params.format.format(*rgb))
                 if next(count) + 1 >= Params.count:
                     break
