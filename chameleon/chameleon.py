@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # chameleon is a simple color picker for X11
-# Copyright (C) 2018  seebye
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -66,7 +65,6 @@ Conversion:
         pi, e
 
 License:
-    chameleon  Copyright (C) 2018  seebye
     This program comes with ABSOLUTELY NO WARRANTY.
     This is free software, and you are welcome to redistribute it
     under certain conditions.
